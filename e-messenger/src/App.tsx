@@ -46,7 +46,6 @@ function App() {
     setUsers(savedUsers);
 
     if (receiver === null) return;
-
     const packetKey = messageKey(receiver.id);
 
     const rawMessages = localStorage.getItem(packetKey);
@@ -56,6 +55,8 @@ function App() {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socketURL, clientID, receiver]);
+
+  useEffect(() => setReceiver(null), [socketURL, clientID]);
 
   useEffect(() => {
     if (readyState !== ReadyState.OPEN) return;
@@ -82,6 +83,7 @@ function App() {
   useEffect(() => {
     if (packet === null) return;
 
+    console.log(packet);
     if (packet.isData() && packet.isGetResponse()) {
       const packetKey = messageKey(packet.id2);
 
@@ -89,9 +91,14 @@ function App() {
       const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
       const newMessages = [...oldMessages, { isSelf: false, content: packet.payload }];
 
-      console.log(packet);
-
       localStorage.setItem(packetKey, JSON.stringify(newMessages));
+      if (users.find(({ id }) => id === packet.id2) === undefined)
+        onNewChat({
+          id: packet.id2,
+          nickname: `User #${packet.id2.toString().padStart(3, "0")}`,
+          avatarURL: `https://cdn2.thecatapi.com/images/${100 + packet.id2}.jpg`,
+        });
+
       if (packet.id2 === receiver?.id) setMessages([...messages, { isSelf: false, content: packet.payload }]);
     }
 

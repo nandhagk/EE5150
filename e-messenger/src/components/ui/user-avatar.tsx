@@ -21,7 +21,6 @@ export function UserAvatar({ user }: UserAvatarProps) {
       </Avatar>
       <div>
         <p className="text-sm font-medium leading-none">{nickname}</p>
-        <p className="text-sm text-muted-foreground">#{id.toString().padStart(3, "0")}</p>
       </div>
     </div>
   );
