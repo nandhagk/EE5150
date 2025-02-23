@@ -36,8 +36,8 @@ export function Settings({ isOpen, setIsOpen, settings, setSettings }: SettingsP
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>New chat</DialogTitle>
-          <DialogDescription>Chat with new user.</DialogDescription>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Set your preferences.</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(setSettings)} className="space-y-8">

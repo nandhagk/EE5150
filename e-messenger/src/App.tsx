@@ -27,7 +27,7 @@ function App() {
   const [receiver, setReceiver] = useState<User | null>(null);
 
   const userKey = `${socketURL}|${clientID}`;
-  const messageKey = (receiverID: number) => `${socketURL}|${clientID}|${receiverID}`;
+  const messageKey = (receiverID: number) => `${userKey}|${receiverID}`;
 
   const [isNewOpen, setIsNewOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -83,7 +83,6 @@ function App() {
   useEffect(() => {
     if (packet === null) return;
 
-    console.log(packet);
     if (packet.isData() && packet.isGetResponse()) {
       const packetKey = messageKey(packet.id2);
 
@@ -159,9 +158,7 @@ function App() {
                     <CommandGroup>
                       {users.map((user, index) => (
                         <CommandItem key={index} className="cursor-pointer py-2" onSelect={() => setReceiver(user)}>
-                          <div>
-                            <UserAvatar user={user} />
-                          </div>
+                          <UserAvatar user={user} />
                         </CommandItem>
                       ))}
                     </CommandGroup>
