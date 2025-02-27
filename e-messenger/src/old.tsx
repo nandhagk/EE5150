@@ -9,9 +9,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { User, UserAvatar } from "@/components/ui/user-avatar";
 import { ControlPacket, DataPacket, ManagementPacket, Packet } from "@/lib/client";
 import { MessageSquarePlus, Settings as SettingsIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
-import {Mutex} from "async-mutex"
 
 const DEFAULT_SETTINGS: Settings = { clientID: 1, socketURL: "ws://localhost:12345", pollInterval: 1000 };
 interface Callback{
@@ -19,40 +18,30 @@ interface Callback{
     reject: () => void,
 }
 
-function deepCopyChat(chatHistory: Map<number, Message[]>){
-	const copy = new Map<number, Message[]>(
-		JSON.parse(JSON.stringify([...chatHistory.entries()]))
-	);
-	// chatHistory.forEach((value, key) => {
-	// 	copy.set(key, [...value]);
-	// });
-	return copy;
-}
-
 
 function App(){
     const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
       
-    const { readyState, lastMessage, sendMessage } = useWebSocket(settings.socketURL, { disableJson: true, share: false, retryOnError: false });
+    const { clientID, socketURL, pollInterval } = settings;
+    const { readyState, lastMessage, sendMessage } = useWebSocket(socketURL, { disableJson: true });
     
     const [chatHistory, setChatHistory] = useState<Map<number, Message[]>>(new Map<number, Message[]>());
     
     const [users, setUsers] = useState<User[]>([]);
     const [receiver, setReceiver] = useState<User | null>(null);
     
-    const userKey = () => {return `${settings.socketURL}|${settings.clientID}|users`};
-    const chatKey = () => {return `${settings.socketURL}|${settings.clientID}|chats`};
+    const userKey = () => {return `${socketURL}|${clientID}|users`};
+    const chatKey = () => {return `${socketURL}|${clientID}|chats`};
     
     const [isNewOpen, setIsNewOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     
     const [callbacks, setCallbacks] = useState<Callback[]>([]);
 
-	const mutex = useRef(new Mutex());
+	const [associated, setAsssociated] = useState<boolean>(false);
 
     const send = (message: Packet) => { // Sends a message
-        console.log(message);
-		const promise = new Promise<Packet>((resolve, reject) => {
+        const promise = new Promise<Packet>((resolve, reject) => {
             setCallbacks([...callbacks, {resolve, reject}]);
         });
         sendMessage(message.encode())
@@ -72,8 +61,8 @@ function App(){
     };
     useEffect(() => { // On recieve
         if (readyState !== ReadyState.OPEN || lastMessage === null) return;
-        setTimeout(() => process(lastMessage.data), 100);
-        // process(lastMessage.data)
+        
+        process(lastMessage.data)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [lastMessage]);
     
@@ -82,45 +71,9 @@ function App(){
             while (callbacks.length > 0){
               callbacks.pop()?.reject();
             }
-			return;
         }
-		let intervalID: NodeJS.Timeout | null = null;
-		console.log(settings);
-		send(ManagementPacket.associate(settings.clientID)).then(
-			(response: Packet) => {            
-                if (
-					response.isManangement() 
-					// && response.isAssociationSuccess()
-				){
-					intervalID = setInterval(() => {                    
-						send(ControlPacket.get(settings.clientID)).then((response: Packet) => {
-							console.log(response);
-							if (response.isData() && response.isGetResponse()) {
-								mutex.current.runExclusive(() => {
-									const oldMessages: Message[] = chatHistory.get(response.id2) !== undefined ? chatHistory.get(response.id2)! : [];
-									console.log("GET", chatHistory.get(response.id2), chatHistory);
-									const newMessages = [...oldMessages, { isSelf: false, content: response.payload }];        
-									
-									setChatHistory(deepCopyChat(chatHistory.set(response.id2, newMessages)));
-									console.log("GET", chatHistory, "DONE");
-								})
-								
-								if (users.find(({ id }) => id === response.id2) === undefined)
-								onNewChat({
-									id: response.id2,
-									nickname: `User #${response.id2.toString().padStart(3, "0")}`,
-									avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
-								});
-							}
-						}) // TODO: Error state
-					}, settings.pollInterval);
-                }                      
-				// TODO: Error state
-			}      
-        )
-		return () => void(intervalID!==null && clearInterval(intervalID));
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [readyState, settings]);
+    }, [readyState]);
       
     useEffect(() => { // Sets the settings
         const rawSettings = localStorage.getItem("settings");
@@ -142,16 +95,14 @@ function App(){
 
         setUsers(savedUsers);
 
-		mutex.current.runExclusive(() => {
-			const rawChat = localStorage.getItem(chatKey());
-			const savedChat = new Map<number, Message[]>(rawChat !== null ? JSON.parse(rawChat) : []);
-	
-			console.log(rawChat, savedUsers);
-	
-			setChatHistory(savedChat);
-		})
+        const rawChat = localStorage.getItem(chatKey());
+        const savedChat = new Map<number, Message[]>(rawChat !== null ? JSON.parse(rawChat) : []);
+
+		console.log(rawChat, savedUsers);
+
+        setChatHistory(savedChat);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [settings.socketURL, settings.clientID]);
+    }, [socketURL, clientID]);
     
     // useEffect(() => { // Save chat when it changes 
     //     if (receiver === null) return;
@@ -159,12 +110,34 @@ function App(){
     // // eslint-disable-next-line react-hooks/exhaustive-deps
     // }, [chatHistory])
     
-    useEffect(() => {setReceiver(null);}, [settings.socketURL, settings.clientID]); // Clear reciever when user changes
-         
+    useEffect(() => setReceiver(null), [socketURL, clientID]); // Clear reciever when user changes
+    
+    useEffect(() => { // When a new connection is established
+		if (readyState !== ReadyState.OPEN) return;
+		
+        let intervalID: NodeJS.Timeout | null = null;
+        
+        send(ManagementPacket.associate(clientID)).then(
+            (response: Packet) => {            
+                if (response.isManangement() && response.isAssociationSuccess()){
+                    setAsssociated(true);
+                }                      
+            // TODO: Error state
+          }      
+        )
+        return () => void (intervalID !== null && clearInterval(intervalID));    
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [readyState]);
+
+	  useEffect(() => {
+		
+	  }, [settings, associated]);
+    
+      
     const onSendMessage = (message: string) => { // When a message is to be sent
         if (receiver === null) return;
     
-        send(DataPacket.push(settings.clientID, receiver.id, message)).then(
+        send(DataPacket.push(clientID, receiver.id, message)).then(
             (response: Packet) => {
                 if (response.isControl() && response.isBufferFull()){
                 // TODO: Error state
@@ -173,13 +146,10 @@ function App(){
             }
         )    
         
-		mutex.current.runExclusive(() => {
-			const oldMessages: Message[] = chatHistory.get(receiver.id) !== undefined ? chatHistory.get(receiver.id)! : [];
-			console.log("SEND", chatHistory);
-			const newMessages = [...oldMessages, { isSelf: true, content: message }];  
-			setChatHistory(deepCopyChat(chatHistory.set(receiver.id, newMessages)));
-			console.log("SEND", chatHistory, "DONE");
-		})
+        const oldMessages: Message[] = chatHistory.get(receiver.id) !== undefined ? chatHistory.get(receiver.id)! : [];
+        const newMessages = [...oldMessages, { isSelf: true, content: message }];        
+
+        setChatHistory(new Map(chatHistory.set(receiver.id, newMessages)));
     };
     
     const onNewChat = (user: User) => { // When a new chat is created

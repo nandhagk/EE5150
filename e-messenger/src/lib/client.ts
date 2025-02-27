@@ -23,7 +23,7 @@ const enum DataMessageType {
   Push = 1,
 }
 
-export class Packet {
+export abstract class Packet {
   public constructor(protected type: PacketType) {}
 
   public isManangement(): this is ManagementPacket {
@@ -52,6 +52,8 @@ export class Packet {
 
     return null;
   }
+
+  abstract encode(): ArrayBuffer;
 }
 
 export class ManagementPacket extends Packet {

@@ -1,0 +1,18 @@
+intervalID = setInterval(() => {     
+						console.log(response);               
+                        send(ControlPacket.get(clientID)).then((response: Packet) => {
+                            if (response.isData() && response.isGetResponse()) {
+                                const oldMessages: Message[] = chatHistory.get(response.id2) !== undefined ? chatHistory.get(response.id2)! : [];
+                                const newMessages = [...oldMessages, { isSelf: false, content: response.payload }];        
+								console.log(oldMessages, newMessages, 1);
+                                setChatHistory(new Map(chatHistory.set(response.id2, newMessages)));
+                                
+                                if (users.find(({ id }) => id === response.id2) === undefined)
+                                onNewChat({
+                                    id: response.id2,
+                                    nickname: `User #${response.id2.toString().padStart(3, "0")}`,
+                                    avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
+                                });
+                            }
+                        }) // TODO: Error state
+                    }, pollInterval);

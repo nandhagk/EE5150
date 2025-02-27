@@ -6,6 +6,7 @@ export interface User {
   avatarURL: string;
 }
 
+
 export interface UserAvatarProps {
   user: User;
 }
