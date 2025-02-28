@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { Send, Edit, Trash } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +16,11 @@ export interface ChatProps {
   receiver: User;
   messages: Message[];
   onSendMessage: (message: string) => void;
+  onDeleteChat: (user: User) => void;
+  onEditChat: (user: User) => void;
 }
 
-export function Chat({ receiver: user, messages, onSendMessage }: ChatProps) {
+export function Chat({ receiver: user, messages, onSendMessage, onDeleteChat, onEditChat }: ChatProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,8 +36,21 @@ export function Chat({ receiver: user, messages, onSendMessage }: ChatProps) {
   return (
     <>
       <div className="bg-card text-card-foreground flex flex-col gap-6 py-4">
-        <div className="gap-1.5 pb-2 border-b-2 flex flex-row items-center">
+        <div className="gap-1.5 pb-2 border-b-2 flex flex-row justify-between">
           <UserAvatar user={user} />
+          <div className="float-end">
+            <Button hidden={true} className="m-2" size="icon" onClick={() => onEditChat(user)} >
+                <Edit />
+                <span className="sr-only">Edit</span>
+              </Button>
+            <Button  size="icon" onClick={() => onDeleteChat(user)}>
+                <Trash/>
+                <span className="sr-only">Delete</span>
+              </Button>
+
+          </div>
+
+          
         </div>
         <div>
           <ScrollArea ref={scrollAreaRef} className="h-[500px] p-4">
