@@ -52,7 +52,7 @@ function App() {
   const send = (message: Packet) => { // Sends a message
     console.log(message);
     const promise = new Promise<Packet>((resolve, reject) => {
-      setCallbacks([...callbacks, { resolve, reject }]);
+      setCallbacks((callbackss) => [...callbackss, { resolve, reject }]);
     });
     sendMessage(message.encode())
     return promise;
@@ -61,7 +61,8 @@ function App() {
   const process = async (data: Blob) => { // Just resolves the required promise
     const buffer = await data.arrayBuffer();
 
-    const { resolve, reject } = callbacks.shift()!;
+    const { resolve, reject } = callbacks[0];
+    setCallbacks((callbackss) => callbackss.slice(1))
     const packet = Packet.decode(buffer);
     if (packet === null) {
       reject();
@@ -97,7 +98,10 @@ function App() {
               const response = await send(ControlPacket.get(settings.clientID));
 
               if (response.isData() && response.isGetResponse()) {
+                let done = false;
                 setChatHistory((history) => {
+                  if (done) return history;
+                  done = true;
                   const oldMessages: Message[] = history.get(response.id2) !== undefined ? history.get(response.id2)! : [];
                   console.log("GET", history.get(response.id2), history);
                   const newMessages = [...oldMessages, { isSelf: false, content: response.payload }];
@@ -185,8 +189,10 @@ const onSendMessage = (message: string) => { // When a message is to be sent
 };
 
 const onDeleteChat = (user: User) => {
-
+  let done = false;
   setUsers((userss) => {
+    if (done) return userss;
+    done = true;
     const newUsers = userss.filter((v) => v.id != user.id)
     localStorage.setItem(userKey(), JSON.stringify(newUsers));
     return newUsers;
@@ -194,8 +200,10 @@ const onDeleteChat = (user: User) => {
 
   setReceiver(null);
 
+  let done2 = false;
   setChatHistory((history) => {
-
+    if (done2) return history;
+    done2 = true;
     const result = (deepCopyChat(history));
     result.delete(user.id)
     localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
@@ -206,8 +214,10 @@ const onDeleteChat = (user: User) => {
 
 const onNewChat = (user: User) => { // When a new chat is created
 
-
+  let done = false;
   setUsers((userss) => {
+    if (done) return userss;
+    done = true;
     const newUsers = [user, ...userss]
     localStorage.setItem(userKey(), JSON.stringify(newUsers));
     return newUsers;
