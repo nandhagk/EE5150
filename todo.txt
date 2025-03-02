@@ -1,18 +1,29 @@
-intervalID = setInterval(() => {     
-						console.log(response);               
-                        send(ControlPacket.get(clientID)).then((response: Packet) => {
-                            if (response.isData() && response.isGetResponse()) {
-                                const oldMessages: Message[] = chatHistory.get(response.id2) !== undefined ? chatHistory.get(response.id2)! : [];
-                                const newMessages = [...oldMessages, { isSelf: false, content: response.payload }];        
-								console.log(oldMessages, newMessages, 1);
-                                setChatHistory(new Map(chatHistory.set(response.id2, newMessages)));
-                                
-                                if (users.find(({ id }) => id === response.id2) === undefined)
-                                onNewChat({
-                                    id: response.id2,
-                                    nickname: `User #${response.id2.toString().padStart(3, "0")}`,
-                                    avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
-                                });
-                            }
-                        }) // TODO: Error state
-                    }, pollInterval);
+send(DataPacket.push(settings.clientID, receiver.id, message)).then(
+      (response: Packet) => {
+        if (response.isControl() && response.isPositiveAck()) return;
+        if (message_idx == -1) {
+          alert("Unknown Error :D");
+          return;
+        }
+        // let error_msg = "";
+        // if (response.isManangement() && response.isUnknownError()) { // has to be unknown error
+        //   error_msg = "Message size is too big :(";
+        // } else if (response.isControl() && response.isBufferFull()) {
+        //   error_msg = "Receiver buffer is full!";
+        // } else { return; }
+        // let done2 = false;
+        // setChatHistory((history) => {
+        //   if (done2) return history;
+        //   done2 = true;
+        //   const oldMessages: Message[] = history.get(receiver.id) !== undefined ? history.get(receiver.id)! : [];
+        //   const newMessages = [...oldMessages];
+        //   newMessages[message_idx].error = error_msg;
+          
+
+        //   const result = (deepCopyChat(history.set(receiver.id, newMessages)));
+        //   localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
+        //   return result;
+        // })
+
+      }
+    )

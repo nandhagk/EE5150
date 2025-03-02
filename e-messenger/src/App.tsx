@@ -90,7 +90,7 @@ function App() {
       (response: Packet) => {
         if (
           response.isManangement()
-          // && response.isAssociationSuccess()
+          && response.isAssociationSuccess()
         ) {
           intervalID = setInterval(async () => {
             let gotEmpty = false;
@@ -99,8 +99,11 @@ function App() {
 
               if (response.isData() && response.isGetResponse()) {
                 let done = false;
-                setChatHistory((history) => {
-                  if (done) return history;
+
+                setChatHistory(() => {
+                  const rawHistory = localStorage.getItem(chatKey());
+                  const history = new Map<number, Message[]>(rawHistory ? JSON.parse(rawHistory) : []);
+                  if (done) return deepCopyChat(history);
                   done = true;
                   const oldMessages: Message[] = history.get(response.id2) !== undefined ? history.get(response.id2)! : [];
                   console.log("GET", history.get(response.id2), history);
@@ -110,7 +113,9 @@ function App() {
                   return result;
                 });
 
-                if (users.find(({ id }) => id === response.id2) === undefined)
+                const uuser: User[] = (localStorage.getItem(userKey()) ? JSON.parse(localStorage.getItem(userKey())!) : []);
+                if (uuser.find(({ id }) => id === response.id2) === undefined)
+                  
                   onNewChat({
                     id: response.id2,
                     nickname: `User #${response.id2.toString().padStart(3, "0")}`,
@@ -123,6 +128,7 @@ function App() {
           }, settings.pollInterval) // TODO: Error state
 
         }
+        alert("Association failed!")
       }
     );
     return () => void (intervalID !== null && clearInterval(intervalID));
@@ -164,34 +170,65 @@ useEffect(() => { setReceiver(null); }, [settings.socketURL, settings.clientID])
 
 const onSendMessage = (message: string) => { // When a message is to be sent
   if (receiver === null) return;
-
-  send(DataPacket.push(settings.clientID, receiver.id, message)).then(
-    (response: Packet) => {
-      if (response.isControl() && response.isBufferFull()) {
-        // TODO: Error state
-        // on error undo the below code! (Or consider adding that exclamation mark business)
-      }
-    }
-  )
-
+  let message_idx = -1;
   let done = false;
-  setChatHistory((history) => {
-    if (done) return history;
+  setChatHistory(() => {
+    const rawHistory = localStorage.getItem(chatKey());
+    const history = new Map<number, Message[]>(rawHistory ? JSON.parse(rawHistory) : []);
+    if (done) return deepCopyChat(history);
     done = true;
     const oldMessages: Message[] = history.get(receiver.id) !== undefined ? history.get(receiver.id)! : [];
+    message_idx = oldMessages.length;
     const newMessages = [...oldMessages, { isSelf: true, content: message }];
     console.log(newMessages)
-    const result = (deepCopyChat(history.set(receiver.id, newMessages)));
+    const result = (deepCopyChat(history));
+    result.set(receiver.id, newMessages)
     localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
     return result;
 
   })
+  send(DataPacket.push(settings.clientID, receiver.id, message)).then(
+    (response: Packet) => {
+      if (response.isControl() && response.isPositiveAck()) return;
+      if (message_idx == -1) {
+        alert("Unknown Error :D");
+        return;
+      }
+      let error_msg = "";
+      if (response.isManangement() && response.isUnknownError()) { // has to be unknown error
+        error_msg = "Message size is too big :(";
+      } else if (response.isControl() && response.isBufferFull()) {
+        error_msg = "Receiver buffer is full!";
+      } else { return; }
+      let done2 = false;
+      setChatHistory(() => {
+        const rawHistory = localStorage.getItem(chatKey());
+        const history = new Map<number, Message[]>(rawHistory ? JSON.parse(rawHistory) : []);
+        if (done2) return deepCopyChat(history);
+        done2 = true;
+        const oldMessages: Message[] = history.get(receiver.id) !== undefined ? history.get(receiver.id)! : [];
+        const newMessages = [...oldMessages];
+        newMessages[message_idx].error = error_msg;
+        
+
+        const result = (deepCopyChat(history.set(receiver.id, newMessages)));
+        localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
+        return result;
+      })
+
+    }
+  
+  )
+
+  
 };
 
 const onDeleteChat = (user: User) => {
   let done = false;
-  setUsers((userss) => {
-    if (done) return userss;
+  setUsers(() => {
+    const rawUsers = localStorage.getItem(userKey());
+    const userss: User[] = rawUsers ? JSON.parse(rawUsers) : [];
+    if (done) return [...userss];
     done = true;
     const newUsers = userss.filter((v) => v.id != user.id)
     localStorage.setItem(userKey(), JSON.stringify(newUsers));
@@ -201,8 +238,10 @@ const onDeleteChat = (user: User) => {
   setReceiver(null);
 
   let done2 = false;
-  setChatHistory((history) => {
-    if (done2) return history;
+  setChatHistory(() => {
+    const rawHistory = localStorage.getItem(chatKey());
+    const history = new Map<number, Message[]>(rawHistory ? JSON.parse(rawHistory) : []);
+    if (done2) return deepCopyChat(history);
     done2 = true;
     const result = (deepCopyChat(history));
     result.delete(user.id)
@@ -215,8 +254,10 @@ const onDeleteChat = (user: User) => {
 const onNewChat = (user: User) => { // When a new chat is created
 
   let done = false;
-  setUsers((userss) => {
-    if (done) return userss;
+  setUsers(() => {
+    const rawUsers = localStorage.getItem(userKey());
+    const userss: User[] = rawUsers ? JSON.parse(rawUsers) : [];
+    if (done) return [...userss];
     done = true;
     const newUsers = [user, ...userss]
     localStorage.setItem(userKey(), JSON.stringify(newUsers));
@@ -250,7 +291,7 @@ return (
                 <ScrollArea type="auto" className="h-[560px]">
                   <CommandEmpty>No chats found.</CommandEmpty>
                   <CommandGroup>
-                    {users.map((user, index) => (
+                    {(localStorage.getItem(userKey()) ? JSON.parse(localStorage.getItem(userKey())!) : []).map((user, index) => (
                       <CommandItem key={index} className="cursor-pointer py-2" onSelect={() => setReceiver(user)}>
                         <UserAvatar user={user} />
                       </CommandItem>
@@ -261,7 +302,7 @@ return (
             </Command>
           </div>
         </div>
-        <div className="flex-1">{receiver === null ? <></> : <Chat onEditChat={() => { }} onDeleteChat={onDeleteChat} receiver={receiver} messages={chatHistory.get(receiver.id) ? chatHistory.get(receiver.id)! : []} onSendMessage={onSendMessage} />}</div>
+        <div className="flex-1">{receiver === null ? <></> : <Chat onEditChat={() => { }} onDeleteChat={onDeleteChat} receiver={receiver} messages={localStorage.getItem(chatKey()) ? new Map<number, Message[]>(JSON.parse(localStorage.getItem(chatKey())!)).get(receiver.id) ?? [] : []} onSendMessage={onSendMessage} />}</div>
       </div>
     </div>
     <NewChat isOpen={isNewOpen} setIsOpen={setIsNewOpen} onCreate={onNewChat} />
