@@ -98,7 +98,7 @@ function App(){
         const rawChat = localStorage.getItem(chatKey());
         const savedChat = new Map<number, Message[]>(rawChat !== null ? JSON.parse(rawChat) : []);
 
-		console.log(rawChat, savedUsers);
+		//console.log(rawChat, savedUsers);
 
         setChatHistory(savedChat);
         // eslint-disable-next-line react-hooks/exhaustive-deps

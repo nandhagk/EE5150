@@ -24,7 +24,7 @@ export interface ChatProps {
 
 export function Chat({ receiver: user, messages, onSendMessage, onDeleteChat, onEditChat }: ChatProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  console.log(messages);
+  //console.log(messages);
   useEffect(() => {
     const scrollArea = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
     if (!scrollArea) return;

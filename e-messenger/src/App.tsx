@@ -10,8 +10,58 @@ import { User, UserAvatar } from "@/components/ui/user-avatar";
 import { ControlPacket, DataPacket, ManagementPacket, Packet } from "@/lib/client";
 import { MessageSquarePlus, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner"
+
+import { Toaster } from "@/components/ui/sonner"
+
 import useWebSocket, { ReadyState } from "react-use-websocket";
 
+import React from 'react';
+import { cn } from '@/lib/utils';
+import { VariantProps, cva } from 'class-variance-authority';
+import { Loader2 } from 'lucide-react';
+
+const spinnerVariants = cva('flex-col items-center justify-center', {
+  variants: {
+    show: {
+      true: 'flex',
+      false: 'hidden',
+    },
+  },
+  defaultVariants: {
+    show: true,
+  },
+});
+
+const loaderVariants = cva('animate-spin text-primary', {
+  variants: {
+    size: {
+      small: 'size-6',
+      medium: 'size-8',
+      large: 'size-12',
+    },
+  },
+  defaultVariants: {
+    size: 'medium',
+  },
+});
+
+interface SpinnerContentProps
+  extends VariantProps<typeof spinnerVariants>,
+    VariantProps<typeof loaderVariants> {
+  className?: string;
+  children?: React.ReactNode;
+}
+
+export function Spinner({ size, show, children, className, assocfail }: SpinnerContentProps & {assocfail: boolean}) {
+  return (
+    <span className={spinnerVariants({ show })}>
+      {assocfail? "Association failed!" : <><Loader2 className={cn(loaderVariants({ size }), className)} />
+      Associating...</>}
+      {children}
+    </span>
+  );
+}
 
 const DEFAULT_SETTINGS: Settings = { clientID: 1, socketURL: "ws://localhost:12345", pollInterval: 1000 };
 interface Callback {
@@ -33,11 +83,14 @@ function deepCopyChat(chatHistory: Map<number, Message[]>) {
 function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
 
-  const { readyState, lastMessage, sendMessage } = useWebSocket(settings.socketURL, { disableJson: true, share: false, retryOnError: false });
+  const { readyState, lastMessage, sendMessage, getWebSocket } = useWebSocket(settings.socketURL, { disableJson: true, share: false, retryOnError: false, //Will attempt to reconnect on all close events, such as server shutting down
+    shouldReconnect: () => true });
 
   const [chatHistory, setChatHistory] = useState<Map<number, Message[]>>(new Map<number, Message[]>());
 
   const [users, setUsers] = useState<User[]>([]);
+  const [associated, setAssociated] = useState<boolean>(false);
+  const [assocFail, setAssocFail] = useState<boolean>(false);
   const [receiver, setReceiver] = useState<User | null>(null);
 
   const userKey = () => { return `${settings.socketURL}|${settings.clientID}|users` };
@@ -50,7 +103,7 @@ function App() {
 
 
   const send = (message: Packet) => { // Sends a message
-    console.log(message);
+    //console.log(message);
     const promise = new Promise<Packet>((resolve, reject) => {
       setCallbacks((callbackss) => [...callbackss, { resolve, reject }]);
     });
@@ -85,13 +138,15 @@ function App() {
       return;
     }
     let intervalID: NodeJS.Timeout | null = null;
-    console.log(settings);
+    setAssocFail(false);
+    //console.log(settings);
     send(ManagementPacket.associate(settings.clientID)).then(
       (response: Packet) => {
         if (
           response.isManangement()
           && response.isAssociationSuccess()
         ) {
+          setAssociated(true);
           intervalID = setInterval(async () => {
             let gotEmpty = false;
             while (!gotEmpty) {
@@ -106,7 +161,7 @@ function App() {
                   if (done) return deepCopyChat(history);
                   done = true;
                   const oldMessages: Message[] = history.get(response.id2) !== undefined ? history.get(response.id2)! : [];
-                  console.log("GET", history.get(response.id2), history);
+                  //console.log("GET", history.get(response.id2), history);
                   const newMessages = [...oldMessages, { isSelf: false, content: response.payload }];
                   const result = (deepCopyChat(history.set(response.id2, newMessages)));
                   localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
@@ -126,9 +181,11 @@ function App() {
               }
             }
           }, settings.pollInterval) // TODO: Error state
-
+          
+          return;
         }
-        alert("Association failed!")
+        toast.error("Association failed!")
+        setAssocFail(true);
       }
     );
     return () => void (intervalID !== null && clearInterval(intervalID));
@@ -150,6 +207,7 @@ const onUpdateSettings = (newSettings: Settings) => {
 };
 
 useEffect(() => { // When the user changes his ID
+  
   const rawUsers = localStorage.getItem(userKey());
   const savedUsers: User[] = rawUsers !== null ? JSON.parse(rawUsers) : [];
 
@@ -161,7 +219,8 @@ useEffect(() => { // When the user changes his ID
 
 
   setChatHistory(savedChat);
-
+  getWebSocket()?.close();
+  setAssociated(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [settings.socketURL, settings.clientID]);
 
@@ -180,7 +239,7 @@ const onSendMessage = (message: string) => { // When a message is to be sent
     const oldMessages: Message[] = history.get(receiver.id) !== undefined ? history.get(receiver.id)! : [];
     message_idx = oldMessages.length;
     const newMessages = [...oldMessages, { isSelf: true, content: message }];
-    console.log(newMessages)
+    //console.log(newMessages)
     const result = (deepCopyChat(history));
     result.set(receiver.id, newMessages)
     localStorage.setItem(chatKey(), JSON.stringify([...result.entries()]));
@@ -191,7 +250,7 @@ const onSendMessage = (message: string) => { // When a message is to be sent
     (response: Packet) => {
       if (response.isControl() && response.isPositiveAck()) return;
       if (message_idx == -1) {
-        alert("Unknown Error :D");
+        toast.error("Unknown Error :D");
         return;
       }
       let error_msg = "";
@@ -292,7 +351,7 @@ return (
                   <CommandEmpty>No chats found.</CommandEmpty>
                   <CommandGroup>
                     {(localStorage.getItem(userKey()) ? JSON.parse(localStorage.getItem(userKey())!) : []).map((user, index) => (
-                      <CommandItem key={index} className="cursor-pointer py-2" onSelect={() => setReceiver(user)}>
+                      <CommandItem selected={user.id == receiver?.id} key={index} className="cursor-pointer py-2" onSelect={() => setReceiver(user)}>
                         <UserAvatar user={user} />
                       </CommandItem>
                     ))}
@@ -302,11 +361,15 @@ return (
             </Command>
           </div>
         </div>
-        <div className="flex-1">{receiver === null ? <></> : <Chat onEditChat={() => { }} onDeleteChat={onDeleteChat} receiver={receiver} messages={localStorage.getItem(chatKey()) ? new Map<number, Message[]>(JSON.parse(localStorage.getItem(chatKey())!)).get(receiver.id) ?? [] : []} onSendMessage={onSendMessage} />}</div>
+        
+        <div className="flex-1">
+          {associated ? (receiver === null ? <></> : <Chat onEditChat={() => { }} onDeleteChat={onDeleteChat} receiver={receiver} messages={localStorage.getItem(chatKey()) ? new Map<number, Message[]>(JSON.parse(localStorage.getItem(chatKey())!)).get(receiver.id) ?? [] : []} onSendMessage={onSendMessage} />) : <><Spinner assocfail={assocFail} size="medium" /></>}
+          </div>
       </div>
     </div>
     <NewChat isOpen={isNewOpen} setIsOpen={setIsNewOpen} onCreate={onNewChat} />
     <Settings isOpen={isSettingsOpen} setIsOpen={setIsSettingsOpen} settings={settings} setSettings={onUpdateSettings} />
+    <Toaster richColors />
   </ThemeProvider>
 );
 }

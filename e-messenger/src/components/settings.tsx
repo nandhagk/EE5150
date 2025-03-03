@@ -72,24 +72,6 @@ export function Settings({ isOpen, setIsOpen, settings, setSettings }: SettingsP
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="pollInterval"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Poll Interval</FormLabel>
-                  <FormControl>
-                    <Input
-                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      type="number"
-                      placeholder="Poll Interval"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
             <DialogFooter>
               <Button className="cursor-pointer" type="submit">
                 Save
