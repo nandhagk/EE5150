@@ -4,19 +4,18 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 const formSchema = z.object({
   clientID: z.coerce.number(),
   socketURL: z.string().url(),
-  pollInterval: z.coerce.number(),
 });
 
 export interface Settings {
   clientID: number;
   socketURL: string;
-  pollInterval: number;
 }
 
 export interface SettingsProps {
@@ -31,6 +30,13 @@ export function Settings({ isOpen, setIsOpen, settings, setSettings }: SettingsP
     resolver: zodResolver(formSchema),
     defaultValues: settings,
   });
+
+  useEffect(() => {
+    form.setValue("clientID", settings.clientID);
+    form.setValue("socketURL", settings.socketURL);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -67,24 +73,6 @@ export function Settings({ isOpen, setIsOpen, settings, setSettings }: SettingsP
                   <FormLabel>Server URL</FormLabel>
                   <FormControl>
                     <Input placeholder="Server URL" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="pollInterval"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Poll Interval</FormLabel>
-                  <FormControl>
-                    <Input
-                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      type="number"
-                      placeholder="Poll Interval"
-                      {...field}
-                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

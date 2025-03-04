@@ -6,129 +6,289 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Toaster } from "@/components/ui/sonner";
 import { User, UserAvatar } from "@/components/ui/user-avatar";
 import { ControlPacket, DataPacket, ManagementPacket, Packet } from "@/lib/client";
 import { MessageSquarePlus, Settings as SettingsIcon } from "lucide-react";
-import { useEffect, useState } from "react";
-import useWebSocket, { ReadyState } from "react-use-websocket";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
-const DEFAULT_SETTINGS: Settings = { clientID: 1, socketURL: "ws://localhost:12345", pollInterval: 1000 };
+const POLL_INTERVAL = 1000;
+const DEFAULT_SETTINGS: Settings = { clientID: 1, socketURL: "ws://localhost:12345" };
+
+interface Request {
+  resolve: (packet: Packet) => void;
+  reject: () => void;
+}
 
 function App() {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS });
+  const { clientID, socketURL } = settings;
 
-  const { clientID, socketURL, pollInterval } = settings;
-  const { readyState, lastMessage, sendMessage } = useWebSocket(socketURL, { disableJson: true });
+  const clientIDRef = useRef(clientID);
+  useEffect(() => {
+    clientIDRef.current = clientID;
+  }, [clientID]);
 
-  const [packet, setPacket] = useState<Packet | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
+
+  const webSocketRef = useRef(webSocket);
+  useEffect(() => {
+    webSocketRef.current = webSocket;
+  }, [webSocket]);
+
+  const [requests, setRequests] = useState<Request[]>([]);
+  const requestsRef = useRef(requests);
+  useEffect(() => {
+    requestsRef.current = requests;
+  }, [requests]);
+
+  const [intervalID, setIntervalID] = useState<ReturnType<typeof setInterval> | null>(null);
+
+  const intervalIDRef = useRef(intervalID);
+  useEffect(() => {
+    intervalIDRef.current = intervalID;
+  }, [intervalID]);
 
   const [users, setUsers] = useState<User[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [receiver, setReceiver] = useState<User | null>(null);
 
-  const userKey = `${socketURL}|${clientID}`;
-  const messageKey = (receiverID: number) => `${userKey}|${receiverID}`;
+  const receiverRef = useRef(receiver);
+  useEffect(() => {
+    receiverRef.current = receiver;
+  }, [receiver]);
+
+  const settingsKey = "settings";
+  const userKey = useMemo(() => `${socketURL}|${clientID}`, [socketURL, clientID]);
+  const chatKey = useCallback((receiverID: number) => `${userKey}|${receiverID}`, [userKey]);
 
   const [isNewOpen, setIsNewOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
-    const rawSettings = localStorage.getItem("settings");
-    const oldSettings: Settings = rawSettings !== null ? JSON.parse(rawSettings) : DEFAULT_SETTINGS;
+    const rawSettings = localStorage.getItem(settingsKey);
+    const settings: Settings = rawSettings !== null ? JSON.parse(rawSettings) : { ...DEFAULT_SETTINGS };
 
-    setSettings(oldSettings);
+    setSettings(settings);
+    localStorage.setItem(settingsKey, JSON.stringify(settings));
   }, []);
+
+  useEffect(() => {
+    if (webSocketRef.current !== null && webSocketRef.current.readyState === WebSocket.OPEN) {
+      webSocketRef.current.addEventListener("close", () => {
+        const webSocket = new WebSocket(socketURL);
+        webSocket.binaryType = "arraybuffer";
+
+        setWebSocket(webSocket);
+      });
+      webSocketRef.current.close();
+    } else {
+      const webSocket = new WebSocket(socketURL);
+      webSocket.binaryType = "arraybuffer";
+
+      setWebSocket(webSocket);
+    }
+  }, [socketURL, clientID]);
+
+  const sendPacket = (packet: Packet): Promise<Packet> => {
+    if (webSocket === null) throw new Error("HOW");
+
+    return new Promise((resolve, reject) => {
+      setRequests((requests) => [...requests, { resolve, reject }]);
+      webSocket.send(packet.encode());
+    });
+  };
+
+  useEffect(() => {
+    setReceiver(null);
+
+    for (const request of requestsRef.current) request.reject();
+    setRequests([]);
+
+    if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
+    setIntervalID(null);
+
+    if (webSocket === null) return;
+
+    webSocket.addEventListener("message", async (event: MessageEvent<ArrayBuffer>) => {
+      const packet = Packet.decode(event.data);
+
+      if (requestsRef.current.length === 0) return; // Probably from previous websocket?
+      const [request, ...requests] = requestsRef.current;
+
+      if (packet !== null) {
+        request.resolve(packet);
+      } else {
+        request.reject();
+      }
+
+      setRequests(requests);
+    });
+
+    webSocket.addEventListener("open", async () => {
+      setReceiver(null);
+
+      for (const request of requestsRef.current) request.reject();
+      setRequests([]);
+
+      if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
+      setIntervalID(null);
+
+      try {
+        const response = await sendPacket(ManagementPacket.associate(clientIDRef.current));
+        if (response.isManangement() && response.isUnknownError()) {
+          toast.error("Association failed!");
+        } else if (response.isManangement() && response.isAssociationSuccess()) {
+          toast.info("Associated!");
+
+          if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
+
+          const intervalID = setInterval(async () => {
+            for (;;) {
+              try {
+                const response = await sendPacket(ControlPacket.get(clientIDRef.current));
+                if (response.isControl() && response.isBufferEmpty()) break;
+
+                if (response.isData() && response.isGetResponse()) {
+                  const rawMessages = localStorage.getItem(chatKey(response.id2));
+                  const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
+
+                  const messages = [...oldMessages, { isSelf: false, content: response.payload }];
+
+                  if (response.id2 === receiverRef.current?.id) setMessages(messages);
+                  localStorage.setItem(chatKey(response.id2), JSON.stringify(messages));
+
+                  if (users.find(({ id }) => id === response.id2) === undefined) {
+                    const user = {
+                      id: response.id2,
+                      nickname: `User #${response.id2.toString().padStart(3, "0")}`,
+                      avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
+                    };
+
+                    onNewChat(user);
+                  }
+
+                  continue;
+                }
+
+                console.error(response);
+                toast.error("Unknown error occurred!");
+              } catch (error) {
+                console.error(error);
+              }
+            }
+          }, POLL_INTERVAL);
+
+          setIntervalID(intervalID);
+        } else {
+          console.error(response);
+          toast.error("Unknown error occurred!");
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error("Unknown error occurred!");
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webSocket]);
 
   useEffect(() => {
     const rawUsers = localStorage.getItem(userKey);
     const savedUsers: User[] = rawUsers !== null ? JSON.parse(rawUsers) : [];
 
     setUsers(savedUsers);
-
-    if (receiver === null) return;
-    const packetKey = messageKey(receiver.id);
-
-    const rawMessages = localStorage.getItem(packetKey);
-    const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
-
-    setMessages(oldMessages);
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socketURL, clientID, receiver]);
 
-  useEffect(() => setReceiver(null), [socketURL, clientID]);
-
   useEffect(() => {
-    if (readyState !== ReadyState.OPEN) return;
-
-    sendMessage(ManagementPacket.associate(clientID).encode());
-
-    const intervalID = setInterval(() => sendMessage(ControlPacket.get(clientID).encode()), pollInterval);
-    return () => clearInterval(intervalID);
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, readyState]);
-
-  const process = async (data: Blob) => {
-    const buffer = await data.arrayBuffer();
-    setPacket(Packet.decode(buffer));
-  };
-
-  useEffect(() => {
-    if (readyState !== ReadyState.OPEN || lastMessage === null) return;
-
-    process(lastMessage.data);
-  }, [readyState, lastMessage]);
-
-  useEffect(() => {
-    if (packet === null) return;
-
-    if (packet.isData() && packet.isGetResponse()) {
-      const packetKey = messageKey(packet.id2);
-
-      const rawMessages = localStorage.getItem(packetKey);
-      const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
-      const newMessages = [...oldMessages, { isSelf: false, content: packet.payload }];
-
-      localStorage.setItem(packetKey, JSON.stringify(newMessages));
-      if (users.find(({ id }) => id === packet.id2) === undefined)
-        onNewChat({
-          id: packet.id2,
-          nickname: `User #${packet.id2.toString().padStart(3, "0")}`,
-          avatarURL: `https://cdn2.thecatapi.com/images/${100 + packet.id2}.jpg`,
-        });
-
-      if (packet.id2 === receiver?.id) setMessages([...messages, { isSelf: false, content: packet.payload }]);
-    }
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [packet]);
-
-  const onSendMessage = (message: string) => {
     if (receiver === null) return;
 
-    sendMessage(DataPacket.push(clientID, receiver.id, message).encode());
+    const rawMessages = localStorage.getItem(chatKey(receiver.id));
+    const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
 
-    const packetKey = messageKey(receiver.id);
+    setMessages(oldMessages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiver]);
 
-    const newMessages = [...messages, { isSelf: true, content: message }];
-    setMessages(newMessages);
+  const onSendMessage = async (message: string) => {
+    if (receiverRef.current === null) throw new Error("HOW");
 
-    localStorage.setItem(packetKey, JSON.stringify(newMessages));
+    const packetKey = chatKey(receiverRef.current.id);
+    const nonce = self.crypto.randomUUID();
+
+    setMessages((oldMessages) => {
+      const messages = [...oldMessages, { nonce, isSelf: true, content: message }];
+      localStorage.setItem(packetKey, JSON.stringify(messages));
+
+      return messages;
+    });
+
+    const setError = (error: string) =>
+      setMessages((oldMessages) => {
+        const messages = oldMessages.map((message) => (message.nonce === nonce ? { error, ...message } : message));
+        localStorage.setItem(packetKey, JSON.stringify(messages));
+
+        return messages;
+      });
+
+    try {
+      const response = await sendPacket(DataPacket.push(clientIDRef.current, receiverRef.current.id, message));
+      if (response.isControl() && response.isPositiveAck()) return;
+
+      if (response.isControl() && response.isBufferFull()) {
+        setError("Buffer full!");
+        toast.error("Buffer full!");
+      } else if (response.isManangement() && response.isUnknownError()) {
+        setError("Message too long!");
+        toast.error("Message too long!");
+      } else {
+        console.error(response);
+
+        setError("Unknown error occurred!");
+        toast.error("Unknown error occurred!");
+      }
+    } catch (error) {
+      console.error(error);
+
+      setError("Unknown error occurred!");
+      toast.error("Unknown error occurred!");
+    }
   };
 
   const onNewChat = (user: User) => {
-    const newUsers = [user, ...users];
+    setUsers((oldUsers) => {
+      const oldUser = oldUsers.find(({ id }) => user.id === id);
+      if (oldUser !== undefined || user.id === clientIDRef.current) return oldUsers;
 
-    setUsers(newUsers);
-    localStorage.setItem(userKey, JSON.stringify(newUsers));
+      const users = [user, ...oldUsers];
+      localStorage.setItem(userKey, JSON.stringify(users));
+
+      return users;
+    });
 
     setIsNewOpen(false);
   };
 
-  const onUpdateSettings = (newSettings: Settings) => {
-    setSettings(newSettings);
-    localStorage.setItem("settings", JSON.stringify(newSettings));
+  const onDeleteChat = (user: User) => {
+    if (user.id === receiverRef.current?.id) {
+      setReceiver(null);
+      setMessages([]);
+    }
+
+    setUsers((oldUsers) => {
+      const users = oldUsers.filter(({ id }) => id !== user.id);
+      localStorage.setItem(userKey, JSON.stringify(users));
+
+      return users;
+    });
+
+    localStorage.setItem(chatKey(user.id), JSON.stringify([]));
+  };
+
+  const onUpdateSettings = (settings: Settings) => {
+    setSettings(settings);
+    localStorage.setItem(settingsKey, JSON.stringify(settings));
 
     setIsSettingsOpen(false);
   };
@@ -149,7 +309,8 @@ function App() {
                 <span className="sr-only">Settings</span>
               </Button>
             </div>
-            <div className="h-[600px]">
+            <div className="font-light italic text-xs">ID: {settings.clientID}</div>
+            <div className="h-[570px]">
               <Command>
                 <CommandInput placeholder="Search" />
                 <CommandList>
@@ -157,7 +318,12 @@ function App() {
                     <CommandEmpty>No chats found.</CommandEmpty>
                     <CommandGroup>
                       {users.map((user, index) => (
-                        <CommandItem key={index} className="cursor-pointer py-2" onSelect={() => setReceiver(user)}>
+                        <CommandItem
+                          selected={user.id == receiver?.id}
+                          key={index}
+                          className="cursor-pointer py-2"
+                          onSelect={() => setReceiver(user)}
+                        >
                           <UserAvatar user={user} />
                         </CommandItem>
                       ))}
@@ -167,11 +333,24 @@ function App() {
               </Command>
             </div>
           </div>
-          <div className="flex-1">{receiver === null ? <></> : <Chat receiver={receiver} messages={messages} onSendMessage={onSendMessage} />}</div>
+          <div className="flex-1">
+            {receiver === null ? (
+              <></>
+            ) : (
+              <Chat
+                receiver={receiver}
+                messages={messages}
+                onSendMessage={onSendMessage}
+                onDeleteChat={() => onDeleteChat(receiver)}
+                onEditChat={() => {}}
+              />
+            )}
+          </div>
         </div>
       </div>
       <NewChat isOpen={isNewOpen} setIsOpen={setIsNewOpen} onCreate={onNewChat} />
       <Settings isOpen={isSettingsOpen} setIsOpen={setIsSettingsOpen} settings={settings} setSettings={onUpdateSettings} />
+      <Toaster richColors />
     </ThemeProvider>
   );
 }
