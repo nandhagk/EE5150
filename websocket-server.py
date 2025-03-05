@@ -14,64 +14,68 @@ buffers = defaultdict(list)  # {client_id: [messages]}
 
 
 async def handle_connection(websocket):
-    print("New client connected")
+    # print("New client connected")
     client_id = None
     try:
         async for message in websocket:
-            print(buffers)
+            # print(buffers)
             # Parse the packet type and message
             packet_type = message[0]  # First byte is the packet type
             packet_message = message[1]  # Second byte is the message type
 
             if packet_type == 0:  # MANAGEMENT packet
                 if packet_message == 0:  # ASSOCIATE
-                    print("Received raw message 1:", message)
+                    print(sessions.keys())
+                    print("ASSOC REQUEST:", websocket, message)
                     client_id = message[2]  # Extract id (1 byte)
                     if client_id in sessions:
                         response = struct.pack('!BBB', 0, 3, client_id)  # UNKNOWNERROR
-                        print("Raw response 1:", response)
+                        print("ASSOC FAIL:", websocket, response)
+                        print()
                         await websocket.send(response)
                         #await websocket.close()  # Forcefully close the new connection
                     else:
                         sessions[client_id] = websocket
                         response = struct.pack('!BBB', 0, 1, client_id)  # ASSOCIATIONSUCCESS
-                        print("Raw response 2:", response)
+                        print("ASSOC SUCC:", sessions, websocket, response)
+
+                        print()
                         await websocket.send(response)
                 else:
-                    print("Received raw message 2:", message)
+                    # print("Received raw message 2:", message)
                     client_id = message[2]  # Extract id (1 byte)
                     response = struct.pack('!BBB', 0,3,client_id) # UNKNOWNERROR
-                    print("Raw response 3:", response)
+                    # print("Raw response 3:", response)
                     await websocket.send(response)
                     
             elif packet_type == 1:  # CONTROL packet
                 if packet_message == 0:  # GET
-                    print("Received raw message 3:", message)
+                    # print("Received raw message 3:", message)
                     client_id = message[2]  # Extract id (1 byte)
                     if client_id not in sessions:
                         response = struct.pack('!BBB', 0, 2, client_id)  # ASSOCIATIONFAILED
-                        print("Raw response 4:", response)
+                        # print("Raw response 4:", response)
                     elif not buffers[client_id]:
                         response = struct.pack('!BBB', 1, 1, client_id)  # BUFFEREMPTY
-                        print("Raw response 5:", response)
+                        # print("Raw response 5:", response)
                     else:
                         message_payload = buffers[client_id].pop(0)
                         sender_id = message_payload[0]
                         message_payload = message_payload[3:]
                         response = struct.pack('!BBBBB', 2, 0, client_id, sender_id, len(message_payload)) + message_payload  # GETRESPONSE
-                        print("Raw response 6:", response)
+                        # print("Raw response 6:", response)
                     await websocket.send(response)
                 else:
-                    print("Received raw message 4:", message)
+                    # print("Received raw message 4:", message)
                     client_id = message[2]  # Extract id (1 byte)
                     response = struct.pack('!BBB', 0,3,client_id) # UNKNOWNERROR
-                    print("Raw response 7:", response)
+                    # print("Raw response 7:", response)
                     await websocket.send(response)
 
             elif packet_type == 2:  # DATA packet
                 if packet_message == 1:  # PUSH
                     client_id = message[2]  # Extract id (1 byte)
-                    print("Received raw message 5:", message)
+                    # print("Received raw message 5:", message)
                     if client_id not in sessions:
                         response = struct.pack('!BBB', 0, 2, client_id)  # ASSOCIATIONFAILED
                     else:
@@ -89,25 +93,30 @@ async def handle_connection(websocket):
                                 response = struct.pack('!BBB', 0,3,client_id) # UNKNOWNERROR
                         else:
                             response = struct.pack('!BBB', 0,3,client_id) # UNKNOWNERROR
-                        print("Raw response 8:", response)
+                        # print("Raw response 8:", response)
                         await websocket.send(response)
                 else:
-                    print("Received raw message 6:", message)
+                    # print("Received raw message 6:", message)
                     client_id = message[2]  # Extract id (1 byte)
                     response = struct.pack('!BBB', 0,3,client_id) # UNKNOWNERROR
-                    print("Raw response 9:", response)
+                    # print("Raw response 9:", response)
                     await websocket.send(response)
 
     except Exception as e:
-        print(f"Error: {e}")
+        # print(f"Error: {e}")
+        pass
     finally:
+        print("DISCON", sessions.keys())
         if client_id in sessions:
+            print("DELETED", sessions[client_id])
             del sessions[client_id]
-        print("Client disconnected")
+        # print("Client disconnected")
+        print("DISCON2", sessions.keys())
+        print()
 
 async def start_server():
     async with websockets.serve(handle_connection, '', 12345):
-        print("WebSocket server started on ws://localhost:12345")
+        # print("WebSocket server started on ws://localhost:12345")
         await asyncio.Future()  # Run forever
 
 # Run the server

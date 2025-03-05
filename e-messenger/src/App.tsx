@@ -146,6 +146,7 @@ function App() {
           response.isManangement()
           && response.isAssociationSuccess()
         ) {
+          alert("SUCC");
           setAssociated(true);
           intervalID = setInterval(async () => {
             let gotEmpty = false;
@@ -184,6 +185,7 @@ function App() {
           
           return;
         }
+        alert("FAIL");
         toast.error("Association failed!")
         setAssocFail(true);
       }
@@ -258,7 +260,7 @@ const onSendMessage = (message: string) => { // When a message is to be sent
         error_msg = "Message size is too big :(";
       } else if (response.isControl() && response.isBufferFull()) {
         error_msg = "Receiver buffer is full!";
-      } else { return; }
+      } else { return alert(1); }
       let done2 = false;
       setChatHistory(() => {
         const rawHistory = localStorage.getItem(chatKey());
