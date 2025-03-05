@@ -12,6 +12,7 @@ import { ControlPacket, DataPacket, ManagementPacket, Packet } from "@/lib/clien
 import { MessageSquarePlus, Settings as SettingsIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Spinner } from "./components/ui/spinner";
 
 const POLL_INTERVAL = 1000;
 const DEFAULT_SETTINGS: Settings = { clientID: 172, socketURL: "ws://localhost:12345" };
@@ -51,6 +52,9 @@ function App() {
   useEffect(() => void (receiverRef.current = receiver), [receiver]);
 
   const [isAssociated, setIsAssociated] = useState<boolean>(false);
+  const [isNotError, setIsNotError] = useState<boolean>(true);
+  const isNotErrorRef = useRef(isNotError);
+  useEffect(() => void (isNotErrorRef.current = isNotError), [isNotError]);
 
   const settingsKey = "settings";
   const userKey = useMemo(() => `${socketURL}|${clientID}`, [socketURL, clientID]);
@@ -86,7 +90,7 @@ function App() {
   }, [socketURL, clientID]);
 
   const sendPacket = (packet: Packet): Promise<Packet> => {
-    if (webSocketRef.current === null || webSocketRef.current.readyState !== webSocketRef.current.OPEN) throw new Error("HOW");
+    if (webSocketRef.current === null || webSocketRef.current.readyState !== webSocketRef.current.OPEN) throw new Error("Websocket is not connected yet");
 
     return new Promise((resolve, reject) => {
       setRequests((requests) => [...requests, { resolve, reject }]);
@@ -106,6 +110,11 @@ function App() {
 
     if (webSocket === null) return;
 
+    webSocket.addEventListener("error", () => {
+      if (!isNotErrorRef.current) return;
+      setIsNotError(false);
+      toast.error("Could not connect to server!");
+    })
     webSocket.addEventListener("message", async (event: MessageEvent<ArrayBuffer>) => {
       const packet = Packet.decode(event.data);
 
@@ -144,7 +153,7 @@ function App() {
           if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
 
           const intervalID = setInterval(async () => {
-            for (;;) {
+            for (; ;) {
               try {
                 if (webSocketRef.current === null || webSocketRef.current.readyState !== WebSocket.OPEN) break;
 
@@ -197,7 +206,6 @@ function App() {
         }
       } catch (error) {
         console.error(error);
-        toast.error("Unknown error occurred!");
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -310,7 +318,7 @@ function App() {
           <div className="w-72 p-2 flex flex-col gap-2">
             <div className="flex flex-row gap-2">
               <h3 className="text-2xl">Chats</h3>
-              <Button className="ml-auto cursor-pointer" type="button" size="icon" onClick={() => setIsNewOpen(true)}>
+              <Button disabled={!isAssociated} className="ml-auto cursor-pointer" type="button" size="icon" onClick={() => setIsNewOpen(true)}>
                 <MessageSquarePlus />
                 <span className="sr-only">New</span>
               </Button>
@@ -329,6 +337,7 @@ function App() {
                     <CommandGroup>
                       {users.map((user, index) => (
                         <CommandItem
+                          disabled={!isAssociated}
                           selected={user.id == receiver?.id}
                           key={index}
                           className="cursor-pointer py-2"
@@ -344,18 +353,22 @@ function App() {
             </div>
           </div>
           <div className="flex-1">
-            {receiver === null ? (
-              <></>
-            ) : (
-              <Chat
-                disableSend={!isAssociated}
-                receiver={receiver}
-                messages={messages}
-                onSendMessage={onSendMessage}
-                onDeleteChat={() => onDeleteChat(receiver)}
-                onEditChat={() => {}}
-              />
-            )}
+            {
+              isAssociated ? (
+                receiver === null ? (
+                  <></>
+                ) : (
+                  <Chat
+                    disableSend={!isAssociated}
+                    receiver={receiver}
+                    messages={messages}
+                    onSendMessage={onSendMessage}
+                    onDeleteChat={() => onDeleteChat(receiver)}
+                    onEditChat={() => { }}
+                  />
+                )) : (
+                isNotError ? <Spinner>Associating...</Spinner> : <div className="flex flex-col items-center justify-center"><span>:(</span></div>
+              )}
           </div>
         </div>
       </div>
