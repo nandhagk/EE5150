@@ -26,38 +26,29 @@ function App() {
   const { clientID, socketURL } = settings;
 
   const clientIDRef = useRef(clientID);
-  useEffect(() => {
-    clientIDRef.current = clientID;
-  }, [clientID]);
+  useEffect(() => void (clientIDRef.current = clientID), [clientID]);
 
   const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
 
   const webSocketRef = useRef(webSocket);
-  useEffect(() => {
-    webSocketRef.current = webSocket;
-  }, [webSocket]);
+  useEffect(() => void (webSocketRef.current = webSocket), [webSocket]);
 
   const [requests, setRequests] = useState<Request[]>([]);
+
   const requestsRef = useRef(requests);
-  useEffect(() => {
-    requestsRef.current = requests;
-  }, [requests]);
+  useEffect(() => void (requestsRef.current = requests), [requests]);
 
   const [intervalID, setIntervalID] = useState<ReturnType<typeof setInterval> | null>(null);
 
   const intervalIDRef = useRef(intervalID);
-  useEffect(() => {
-    intervalIDRef.current = intervalID;
-  }, [intervalID]);
+  useEffect(() => void (intervalIDRef.current = intervalID), [intervalID]);
 
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [receiver, setReceiver] = useState<User | null>(null);
 
   const receiverRef = useRef(receiver);
-  useEffect(() => {
-    receiverRef.current = receiver;
-  }, [receiver]);
+  useEffect(() => void (receiverRef.current = receiver), [receiver]);
 
   const settingsKey = "settings";
   const userKey = useMemo(() => `${socketURL}|${clientID}`, [socketURL, clientID]);
@@ -77,6 +68,7 @@ function App() {
   useEffect(() => {
     if (webSocketRef.current !== null && webSocketRef.current.readyState === WebSocket.OPEN) {
       webSocketRef.current.addEventListener("close", () => {
+        console.log("CLOSE!");
         const webSocket = new WebSocket(socketURL);
         webSocket.binaryType = "arraybuffer";
 
@@ -92,11 +84,11 @@ function App() {
   }, [socketURL, clientID]);
 
   const sendPacket = (packet: Packet): Promise<Packet> => {
-    if (webSocket === null) throw new Error("HOW");
+    if (webSocketRef.current === null || webSocketRef.current.readyState !== webSocketRef.current.OPEN) throw new Error("HOW");
 
     return new Promise((resolve, reject) => {
       setRequests((requests) => [...requests, { resolve, reject }]);
-      webSocket.send(packet.encode());
+      webSocketRef.current!.send(packet.encode());
     });
   };
 
@@ -147,6 +139,8 @@ function App() {
           const intervalID = setInterval(async () => {
             for (;;) {
               try {
+                if (webSocketRef.current === null || webSocketRef.current.readyState !== WebSocket.OPEN) break;
+
                 const response = await sendPacket(ControlPacket.get(clientIDRef.current));
                 if (response.isControl() && response.isBufferEmpty()) break;
 
