@@ -16,6 +16,7 @@ export interface Message {
 }
 
 export interface ChatProps {
+  disableSend: boolean;
   receiver: User;
   messages: Message[];
   onSendMessage: (message: string) => void;
@@ -23,7 +24,7 @@ export interface ChatProps {
   onEditChat: () => void;
 }
 
-export function Chat({ receiver: user, messages, onSendMessage, onDeleteChat, onEditChat }: ChatProps) {
+export function Chat({ receiver: user, messages, disableSend, onSendMessage, onDeleteChat, onEditChat }: ChatProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -102,7 +103,7 @@ export function Chat({ receiver: user, messages, onSendMessage, onDeleteChat, on
               value={input}
               onChange={(event) => setInput(event.target.value)}
             />
-            <Button type="submit" size="icon" disabled={inputLength === 0}>
+            <Button type="submit" size="icon" disabled={inputLength === 0 || disableSend}>
               <Send />
               <span className="sr-only">Send</span>
             </Button>

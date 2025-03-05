@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const POLL_INTERVAL = 1000;
-const DEFAULT_SETTINGS: Settings = { clientID: 1, socketURL: "ws://localhost:12345" };
+const DEFAULT_SETTINGS: Settings = { clientID: 172, socketURL: "ws://localhost:12345" };
 
 interface Request {
   resolve: (packet: Packet) => void;
@@ -49,6 +49,8 @@ function App() {
 
   const receiverRef = useRef(receiver);
   useEffect(() => void (receiverRef.current = receiver), [receiver]);
+
+  const [isAssociated, setIsAssociated] = useState<boolean>(false);
 
   const settingsKey = "settings";
   const userKey = useMemo(() => `${socketURL}|${clientID}`, [socketURL, clientID]);
@@ -93,6 +95,7 @@ function App() {
   };
 
   useEffect(() => {
+    setIsAssociated(false);
     setReceiver(null);
 
     for (const request of requestsRef.current) request.reject();
@@ -119,6 +122,7 @@ function App() {
     });
 
     webSocket.addEventListener("open", async () => {
+      setIsAssociated(false);
       setReceiver(null);
 
       for (const request of requestsRef.current) request.reject();
@@ -128,10 +132,13 @@ function App() {
       setIntervalID(null);
 
       try {
+        console.log("ASSOCIATING");
         const response = await sendPacket(ManagementPacket.associate(clientIDRef.current));
+        console.log(response);
         if (response.isManangement() && response.isUnknownError()) {
           toast.error("Association failed!");
         } else if (response.isManangement() && response.isAssociationSuccess()) {
+          setIsAssociated(true);
           toast.info("Associated!");
 
           if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
@@ -166,10 +173,19 @@ function App() {
                   continue;
                 }
 
-                console.error(response);
-                toast.error("Unknown error occurred!");
+                if (response.isManangement() && response.isAssociationFailed()) {
+                  toast.warning("IMPERSONATION?!, Consider refreshing");
+                  clearInterval(intervalID);
+                  setIntervalID(null);
+                } else {
+                  console.error(response);
+                  toast.error("Unknown error occurred!");
+                }
+
+                break;
               } catch (error) {
                 console.error(error);
+                break;
               }
             }
           }, POLL_INTERVAL);
@@ -253,7 +269,7 @@ function App() {
   const onNewChat = (user: User) => {
     setUsers((oldUsers) => {
       const oldUser = oldUsers.find(({ id }) => user.id === id);
-      if (oldUser !== undefined || user.id === clientIDRef.current) return oldUsers;
+      if (oldUser !== undefined) return oldUsers;
 
       const users = [user, ...oldUsers];
       localStorage.setItem(userKey, JSON.stringify(users));
@@ -332,6 +348,7 @@ function App() {
               <></>
             ) : (
               <Chat
+                disableSend={!isAssociated}
                 receiver={receiver}
                 messages={messages}
                 onSendMessage={onSendMessage}
