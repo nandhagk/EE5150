@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: Settings = { clientID: 172, socketURL: "ws://localhost:1
 
 interface Request {
   resolve: (packet: Packet) => void;
-  reject: () => void;
+  reject: (error: Error) => void;
 }
 
 function App() {
@@ -53,6 +53,7 @@ function App() {
 
   const [isAssociated, setIsAssociated] = useState<boolean>(false);
   const [isNotError, setIsNotError] = useState<boolean>(true);
+
   const isNotErrorRef = useRef(isNotError);
   useEffect(() => void (isNotErrorRef.current = isNotError), [isNotError]);
 
@@ -74,12 +75,12 @@ function App() {
   useEffect(() => {
     if (webSocketRef.current !== null && webSocketRef.current.readyState === WebSocket.OPEN) {
       webSocketRef.current.addEventListener("close", () => {
-        console.log("CLOSE!");
         const webSocket = new WebSocket(socketURL);
         webSocket.binaryType = "arraybuffer";
 
         setWebSocket(webSocket);
       });
+
       webSocketRef.current.close();
     } else {
       const webSocket = new WebSocket(socketURL);
@@ -90,7 +91,8 @@ function App() {
   }, [socketURL, clientID]);
 
   const sendPacket = (packet: Packet): Promise<Packet> => {
-    if (webSocketRef.current === null || webSocketRef.current.readyState !== webSocketRef.current.OPEN) throw new Error("Websocket is not connected yet");
+    if (webSocketRef.current === null || webSocketRef.current.readyState !== webSocketRef.current.OPEN)
+      throw new Error("Websocket is not connected yet");
 
     return new Promise((resolve, reject) => {
       setRequests((requests) => [...requests, { resolve, reject }]);
@@ -98,23 +100,100 @@ function App() {
     });
   };
 
-  useEffect(() => {
+  const reset = () => {
     setIsAssociated(false);
-    setReceiver(null);
 
-    for (const request of requestsRef.current) request.reject();
+    for (const request of requestsRef.current) request.reject(new Error("Websocket is reset"));
     setRequests([]);
 
     if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
     setIntervalID(null);
+  };
+
+  const pollForMessages = async (intervalID: ReturnType<typeof setInterval>) => {
+    for (;;) {
+      try {
+        if (webSocketRef.current === null || webSocketRef.current.readyState !== WebSocket.OPEN) break;
+
+        const response = await sendPacket(ControlPacket.get(clientIDRef.current));
+        if (response.isControl() && response.isBufferEmpty()) break;
+
+        if (response.isData() && response.isGetResponse()) {
+          const rawMessages = localStorage.getItem(chatKey(response.id2));
+          const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
+
+          const messages = [...oldMessages, { isSelf: false, content: response.payload }];
+
+          if (response.id2 === receiverRef.current?.id) setMessages(messages);
+          localStorage.setItem(chatKey(response.id2), JSON.stringify(messages));
+
+          if (users.find(({ id }) => id === response.id2) === undefined) {
+            const user = {
+              id: response.id2,
+              nickname: `User #${response.id2.toString().padStart(3, "0")}`,
+              avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
+            };
+
+            onNewChat(user);
+          }
+
+          continue;
+        }
+
+        if (response.isManangement() && response.isAssociationFailed()) {
+          toast.warning("IMPERSONATION?!, Consider refreshing");
+          clearInterval(intervalID);
+          setIntervalID(null);
+        } else {
+          console.error(response);
+          toast.error("Unknown error occurred!");
+        }
+
+        break;
+      } catch (error) {
+        console.error(error);
+        break;
+      }
+    }
+  };
+
+  const associate = async () => {
+    try {
+      const response = await sendPacket(ManagementPacket.associate(clientIDRef.current));
+      if (response.isManangement() && response.isUnknownError()) {
+        toast.error("Association failed!");
+      } else if (response.isManangement() && response.isAssociationSuccess()) {
+        setIsAssociated(true);
+        toast.info("Associated!");
+
+        if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
+
+        const intervalID = setInterval(async () => await pollForMessages(intervalID), POLL_INTERVAL);
+        setIntervalID(intervalID);
+      } else {
+        console.error(response);
+        toast.error("Unknown error occurred!");
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  useEffect(() => {
+    setReceiver(null);
+    reset();
 
     if (webSocket === null) return;
 
     webSocket.addEventListener("error", () => {
+      setIsAssociated(false);
+
       if (!isNotErrorRef.current) return;
+
       setIsNotError(false);
       toast.error("Could not connect to server!");
-    })
+    });
+
     webSocket.addEventListener("message", async (event: MessageEvent<ArrayBuffer>) => {
       const packet = Packet.decode(event.data);
 
@@ -124,88 +203,25 @@ function App() {
       if (packet !== null) {
         request.resolve(packet);
       } else {
-        request.reject();
+        request.reject(new Error("Failed to decode packet"));
       }
 
       setRequests(requests);
     });
 
     webSocket.addEventListener("open", async () => {
-      setIsAssociated(false);
       setReceiver(null);
+      reset();
 
-      for (const request of requestsRef.current) request.reject();
-      setRequests([]);
+      await associate();
+    });
 
-      if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
-      setIntervalID(null);
+    webSocket.addEventListener("close", (event) => {
+      if (event.code === 1001) {
+        setIsNotError(false);
+        reset();
 
-      try {
-        console.log("ASSOCIATING");
-        const response = await sendPacket(ManagementPacket.associate(clientIDRef.current));
-        console.log(response);
-        if (response.isManangement() && response.isUnknownError()) {
-          toast.error("Association failed!");
-        } else if (response.isManangement() && response.isAssociationSuccess()) {
-          setIsAssociated(true);
-          toast.info("Associated!");
-
-          if (intervalIDRef.current !== null) clearInterval(intervalIDRef.current);
-
-          const intervalID = setInterval(async () => {
-            for (; ;) {
-              try {
-                if (webSocketRef.current === null || webSocketRef.current.readyState !== WebSocket.OPEN) break;
-
-                const response = await sendPacket(ControlPacket.get(clientIDRef.current));
-                if (response.isControl() && response.isBufferEmpty()) break;
-
-                if (response.isData() && response.isGetResponse()) {
-                  const rawMessages = localStorage.getItem(chatKey(response.id2));
-                  const oldMessages: Message[] = rawMessages !== null ? JSON.parse(rawMessages) : [];
-
-                  const messages = [...oldMessages, { isSelf: false, content: response.payload }];
-
-                  if (response.id2 === receiverRef.current?.id) setMessages(messages);
-                  localStorage.setItem(chatKey(response.id2), JSON.stringify(messages));
-
-                  if (users.find(({ id }) => id === response.id2) === undefined) {
-                    const user = {
-                      id: response.id2,
-                      nickname: `User #${response.id2.toString().padStart(3, "0")}`,
-                      avatarURL: `https://cdn2.thecatapi.com/images/${100 + response.id2}.jpg`,
-                    };
-
-                    onNewChat(user);
-                  }
-
-                  continue;
-                }
-
-                if (response.isManangement() && response.isAssociationFailed()) {
-                  toast.warning("IMPERSONATION?!, Consider refreshing");
-                  clearInterval(intervalID);
-                  setIntervalID(null);
-                } else {
-                  console.error(response);
-                  toast.error("Unknown error occurred!");
-                }
-
-                break;
-              } catch (error) {
-                console.error(error);
-                break;
-              }
-            }
-          }, POLL_INTERVAL);
-
-          setIntervalID(intervalID);
-        } else {
-          console.error(response);
-          toast.error("Unknown error occurred!");
-        }
-      } catch (error) {
-        console.error(error);
+        toast.error("Server has shut down!");
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,22 +369,26 @@ function App() {
             </div>
           </div>
           <div className="flex-1">
-            {
-              isAssociated ? (
-                receiver === null ? (
-                  <></>
-                ) : (
-                  <Chat
-                    disableSend={!isAssociated}
-                    receiver={receiver}
-                    messages={messages}
-                    onSendMessage={onSendMessage}
-                    onDeleteChat={() => onDeleteChat(receiver)}
-                    onEditChat={() => { }}
-                  />
-                )) : (
-                isNotError ? <Spinner>Associating...</Spinner> : <div className="flex flex-col items-center justify-center"><span>:(</span></div>
-              )}
+            {isAssociated ? (
+              receiver === null ? (
+                <></>
+              ) : (
+                <Chat
+                  disableSend={!isAssociated}
+                  receiver={receiver}
+                  messages={messages}
+                  onSendMessage={onSendMessage}
+                  onDeleteChat={() => onDeleteChat(receiver)}
+                  onEditChat={() => {}}
+                />
+              )
+            ) : isNotError ? (
+              <Spinner>Associating...</Spinner>
+            ) : (
+              <div className="flex flex-col items-center justify-center">
+                <span>Could not connect to server.</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
