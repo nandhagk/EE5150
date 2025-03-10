@@ -28,6 +28,9 @@ class UDPClient:
         self.acks: list[Ack] = []
         self.last_ack: Seq = -1
 
+
+        self.two_message_arrive_event = threading.Event()
+
         # TODO: Figure out a way to establish the connection!
         # Since the socket doesn't like receiving until a message is sent
 
@@ -60,6 +63,8 @@ class UDPClient:
                 self.last_ack = seq
                 self.acks.append((time.time(), seq))
 
+                if len(self.acks) == 2:
+                    self.two_message_arrive_event.set()
 
             except socket.error as e: # If the socket closed abruptly
                 print(e) # TODO: Figure out expected behaviour here!
@@ -115,7 +120,8 @@ class UDPClient:
         for i in range(PACKET_SEND_COUNT):
             self.send_queue.put(last_ack + i + 1)
 
-        # TODO: Sleep until list size > 2
+        # TODO: Provide a resonable timeout to giveup (or try again ???)
+        self.two_message_arrive_event.wait()
 
         first_ack = self.acks[0][0] # Approximately rtt + proc
         second_ack = self.acks[1][0] # Approximately rtt + 2 * proc
@@ -150,21 +156,39 @@ class UDPClient:
         # But to account for any minute errors, we go uptil 1.5 * the required
 
 
-        start_time = time.time()
+        start_time: Timestamp = time.time()
         last_ack = self.last_ack
 
         for i in range(PACKET_SEND_COUNT):
             self.send_queue.put(last_ack + i + 1)
 
-        # Sleep until we expect all the sent packets to be received
-        time.sleep(rtt + processing_delay * PACKET_SEND_COUNT)
-
-        # We expect that the last packets that we send will be dropped due to the buffer begin full
-        # Therefore the last ack we receive approximately tells us the size of the buffer
-        # (It is the last packet to be allowed on the buffer)
-        buffer_size = math.floor((self.acks[-1][0] - start_time - rtt) / processing_delay)
+        # We don't expect any packets to arrive by now
+        time.sleep(rtt)
         
-        return buffer_size
+        # Since some missing packets can be caused by the drop chance (and not buffer full)
+        # We devised the below method :)
+
+        contiguous_missing_packet_count = 0
+        previous_acks_count = len(self.acks)
+
+        for _ in range(PACKET_SEND_COUNT):
+            # We will expect a packet once every processing delay from now
+            time.sleep(processing_delay)
+
+            acks_count = len(self.acks)
+            if (acks_count == previous_acks_count):
+                contiguous_missing_packet_count += 1
+
+            else:
+                contiguous_missing_packet_count = 0
+
+            # If we get 8 missing packets continuously, we expect this TODO (write probability) to be because of buffer full
+            if contiguous_missing_packet_count >= 8:
+                buffer_size = math.floor((self.acks[-1][0] - start_time - rtt) / processing_delay)
+                return buffer_size
+
+        # If we did not get buffer losses till here, we can confidently say our buffer is big enough :)
+        return REQUIRED_BUFFER_SIZE
     
     def profit(self, rtt: float, processing_delay: float, buffer_size: int):
         """
