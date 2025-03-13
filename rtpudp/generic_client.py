@@ -31,8 +31,12 @@ class UDPClient:
 
         self.two_message_arrive_event = threading.Event()
 
-        # TODO: Figure out a way to establish the connection!
-        # Since the socket doesn't like receiving until a message is sent
+        self.listen_ready = threading.Event()
+
+        self.start_polling: bool = False
+        self.total_sends = 0
+        self.total_recs = 0
+
 
     def _service_loop(self):
         """
@@ -50,9 +54,12 @@ class UDPClient:
                 self.__sock.sendto(
                     struct.pack("!I", max(self.last_ack + 1, seq)), self.__address
                 )
-                self.__sock.sendto(
-                    struct.pack("!I", max(self.last_ack + 1, seq)), self.__address
-                )
+
+                if (self.start_polling):
+                    self.total_sends += 1
+
+
+                self.listen_ready.set()
             except Exception:
                 ...
 
@@ -60,8 +67,7 @@ class UDPClient:
 
     def _listen(self):
         """Listens for responses from the server"""
-        self.__is_running = True
-
+        self.listen_ready.wait()
         while self.__is_running:
             try:
                 response, _server_address = self.__sock.recvfrom(2048)
@@ -69,6 +75,8 @@ class UDPClient:
                     return
 
                 seq: Seq = struct.unpack("!I", response)[0]
+                if (self.start_polling):
+                    self.total_recs += 1
 
                 self.last_ack = seq
                 print("RECEIVED ACK", seq, flush=True)
@@ -204,6 +212,7 @@ class UDPClient:
         # If we did not get buffer losses till here, we can confidently say our buffer is big enough :)
 
         return REQUIRED_BUFFER_SIZE
+    
 
     def profit(self, rtt: float, processing_delay: float, buffer_size: int):
         """
@@ -219,15 +228,15 @@ class UDPClient:
 
         sending_interval = max(processing_delay, (processing_delay + rtt) / buffer_size)
         # (processing_delay + rtt) / buffer_size is the minimum interval we can place while ensuring no buffer loss
-        # TODO: Account for small delta errors
-        print(sending_interval, flush=True)
+        
+        self.start_polling = True
+        drop_chance = 0
 
         start_time = time.time()
 
         seq = self.last_ack + 1
         while self.last_ack < 1000:
             # Send the remaining packets
-            time.sleep(sending_interval * 1.05 * 2)
 
             # TODO: Account for race conditions!
             if (
@@ -235,15 +244,26 @@ class UDPClient:
                 and self.acks[-1][1] == self.acks[-3][1]
                 and self.acks[-1][1] == self.acks[-2][1]
             ):
-                print("DOUBLE ACK", seq, flush=True)
-                # Whenever we perceive a double ack we reset our sequence number
+                print("TRIPLE ACK", self.acks[-1][1], flush=True)
+                # Whenever we perceive a triple ack we reset our sequence number
                 seq = self.acks[-1][1] + 1
-                time.sleep(rtt * 1.05)
+                time.sleep(rtt * 1.05) # Let the buffer clear
 
             # TODO: We can actually be smarter about when to reset our sequence number!
 
+            if self.total_sends > 10:
+                in_buffer = (seq - self.acks[-1][1])
+                drop_chance = max(1 - (self.total_recs + in_buffer) / (self.total_sends), 0)
+
+            # A nice heuristic we discovered :)
+            send_count = round(math.exp(drop_chance / (1 - min(drop_chance, 0.9))) * 5 - 4)
+            
+            print(drop_chance, send_count, send_count * (1 - drop_chance), self.total_recs, self.total_sends)
             # We keep incrementally sending data
-            self.send_queue.put(seq)
+            for _ in range(send_count):
+                self.send_queue.put(seq)
+            
+            time.sleep(sending_interval * 1.05 * send_count)
             seq += 1
 
     def main(self) -> bool:
@@ -253,11 +273,12 @@ class UDPClient:
         """
         # Stage 1:
         rtt, proc = self.estimate_delays()
+        print(rtt, proc, flush=True)
 
         # Stage 2:
         buffer_size = self.estimate_buffer(rtt, proc)
         print(buffer_size, flush=True)
-
+        
         # Stage 3:
         self.profit(rtt, proc, buffer_size)
 

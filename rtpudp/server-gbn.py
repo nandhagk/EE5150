@@ -9,12 +9,12 @@ import time
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 12000
 BUFFER_SIZE = 1024
-QUEUE_SIZE = 100  # B, Max buffer size
+QUEUE_SIZE = 1  # B, Max buffer size
 PACKET_SERVICE_INTERVAL = (
-    1 / 1000  # 1/C, Inverse of the link capacity, packet processing rate (FIFO)
+    1 / 10  # 1/C, Inverse of the link capacity, packet processing rate (FIFO)
 )
-DROP_PROBABILITY = 0.1  # PER, Probability of packet drop before entering the queue
-RTT = 0.1  # Round-trip time (RTT)
+DROP_PROBABILITY = 0.1 # PER, Probability of packet drop before entering the queue
+RTT = 0.001  # Round-trip time (RTT)
 
 # Create UDP socket
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
