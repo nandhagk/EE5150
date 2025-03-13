@@ -1,3 +1,12 @@
+"""
+Authors:
+    Nandha Gopi Krishna CS23B044
+    Kaushik G Iyer EE23B135
+
+    Github:
+    https://github.com/nandhagk/EE5150/tree/main/rtpudp
+"""
+
 import math
 import queue
 import socket
