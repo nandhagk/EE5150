@@ -1,10 +1,9 @@
+import math
+import queue
 import socket
 import struct
 import threading
-
-import queue
 import time
-import math
 
 type Seq = int
 type Timestamp = float
@@ -16,10 +15,12 @@ type Ack = tuple[Timestamp, Seq]
 
 class UDPClient:
     def __init__(self, address: tuple[str, int]):
-        self.__sock = socket.socket(socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_DGRAM)
+        self.__sock = socket.socket(
+            socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_DGRAM
+        )
         self.__address = address
         self.__is_running = False
-        
+
         self.__listen_thread: threading.Thread
         self.__service_thread: threading.Thread
 
@@ -28,12 +29,10 @@ class UDPClient:
         self.acks: list[Ack] = []
         self.last_ack: Seq = -1
 
-
         self.two_message_arrive_event = threading.Event()
 
         # TODO: Figure out a way to establish the connection!
         # Since the socket doesn't like receiving until a message is sent
-
 
     def _service_loop(self):
         """
@@ -42,13 +41,21 @@ class UDPClient:
         """
 
         while self.__is_running:
-            seq = self.send_queue.get()  
+            seq = self.send_queue.get()
 
-            if seq is None: 
+            if seq is None:
                 break
 
-            self.__sock.sendto(struct.pack("!I", max(self.last_ack + 1, seq)), self.__address)
-                   
+            try:
+                self.__sock.sendto(
+                    struct.pack("!I", max(self.last_ack + 1, seq)), self.__address
+                )
+                self.__sock.sendto(
+                    struct.pack("!I", max(self.last_ack + 1, seq)), self.__address
+                )
+            except Exception:
+                ...
+
         self.stop()
 
     def _listen(self):
@@ -58,16 +65,20 @@ class UDPClient:
         while self.__is_running:
             try:
                 response, _server_address = self.__sock.recvfrom(2048)
+                if len(response) != 4:
+                    return
+
                 seq: Seq = struct.unpack("!I", response)[0]
 
                 self.last_ack = seq
+                print("RECEIVED ACK", seq, flush=True)
                 self.acks.append((time.time(), seq))
 
                 if len(self.acks) == 2:
                     self.two_message_arrive_event.set()
 
-            except socket.error as e: # If the socket closed abruptly
-                print(e) # TODO: Figure out expected behaviour here!
+            except socket.error as e:  # If the socket closed abruptly
+                print(e)  # TODO: Figure out expected behaviour here, flush=True!
                 self.stop()
 
     def stop(self):
@@ -77,9 +88,13 @@ class UDPClient:
 
         self.__is_running = False
         self.send_queue.put(None)
-        self.__sock.shutdown(socket.SHUT_RDWR)
-        self.__sock.close()
 
+        try:
+            self.__sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            print("HI", flush=True)
+
+        self.__sock.close()
 
     def run(self) -> bool:
         """
@@ -96,38 +111,35 @@ class UDPClient:
         return self.main()
 
     def cleanup(self):
-        ""
+        """"""
         self.stop()
         self.__listen_thread.join()
         self.__service_thread.join()
 
-
     def estimate_delays(self) -> tuple[float, float]:
         """
         STAGE 1!
-        
+
         We estimate the rtt and the processing delay.
         NOTE: For this to work we required that atleast 2 packets are served succesfully
         """
-        
+
         PACKET_SEND_COUNT = 8
         # Assuming the drop probability is <25%,
         # the probability that atleast 2 packets are successfully served is > TODO%
 
         start_time = time.time()
-        last_ack = self.last_ack
-
-        for i in range(PACKET_SEND_COUNT):
-            self.send_queue.put(last_ack + i + 1)
+        for _ in range(PACKET_SEND_COUNT):
+            self.send_queue.put(0)
 
         # TODO: Provide a resonable timeout to giveup (or try again ???)
         self.two_message_arrive_event.wait()
 
-        first_ack = self.acks[0][0] # Approximately rtt + proc
-        second_ack = self.acks[1][0] # Approximately rtt + 2 * proc
+        first_ack = self.acks[0][0]  # Approximately rtt
+        second_ack = self.acks[1][0]  # Approximately rtt + proc
 
         proc = second_ack - first_ack
-        rtt = first_ack - start_time - proc
+        rtt = first_ack - start_time
 
         # NOTE: There still might be packets being processed by the previous stage here!
         # We just sleep to ensure the buffer is empty
@@ -136,25 +148,25 @@ class UDPClient:
 
         return rtt, proc
 
-
     def estimate_buffer(self, rtt: float, processing_delay: float) -> int:
         """
         STAGE 2!
-        
+
         We estimate the buffer size.
         (or we figure out that it is sufficiently big enough)
 
         NOTE: We expect the server queue to be empty!
         """
-        
+        print("ESTIMATING", rtt, processing_delay, flush=True)
+
         REQUIRED_BUFFER_SIZE = math.ceil((rtt + processing_delay) / processing_delay)
         """The buffer size required by us (More about this in `self.profit`)"""
 
-        PACKET_SEND_COUNT = (REQUIRED_BUFFER_SIZE * 3) // 2
+        PACKET_SEND_COUNT = 2 * REQUIRED_BUFFER_SIZE
+        print(REQUIRED_BUFFER_SIZE, PACKET_SEND_COUNT, flush=True)
         # To get a decent idea of the buffer size, we need to fill it to the max
         # Since we are happy with the REQUIRED_BUFFER_SIZE, we only need calculate till that point
         # But to account for any minute errors, we go uptil 1.5 * the required
-
 
         start_time: Timestamp = time.time()
         last_ack = self.last_ack
@@ -164,7 +176,7 @@ class UDPClient:
 
         # We don't expect any packets to arrive by now
         time.sleep(rtt)
-        
+
         # Since some missing packets can be caused by the drop chance (and not buffer full)
         # We devised the below method :)
 
@@ -173,30 +185,34 @@ class UDPClient:
 
         for _ in range(PACKET_SEND_COUNT):
             # We will expect a packet once every processing delay from now
-            time.sleep(processing_delay)
 
             acks_count = len(self.acks)
-            if (acks_count == previous_acks_count):
+            if acks_count == previous_acks_count:
                 contiguous_missing_packet_count += 1
-
             else:
                 contiguous_missing_packet_count = 0
 
+            previous_acks_count = acks_count
             # If we get 8 missing packets continuously, we expect this TODO (write probability) to be because of buffer full
             if contiguous_missing_packet_count >= 8:
-                buffer_size = math.floor((self.acks[-1][0] - start_time - rtt) / processing_delay)
+                buffer_size = round(
+                    (self.acks[-1][0] - start_time - rtt) / processing_delay
+                )
                 return buffer_size
 
+            time.sleep(processing_delay)
         # If we did not get buffer losses till here, we can confidently say our buffer is big enough :)
+
         return REQUIRED_BUFFER_SIZE
-    
+
     def profit(self, rtt: float, processing_delay: float, buffer_size: int):
         """
         STAGE 3!
-        
+
         Everything is known, our hard work has paid off. Tis now the time to take advantage of our knowledge
         """
-        
+        print("PROFIT", processing_delay, buffer_size, flush=True)
+
         # Ideally we want to send messages every processing delay
         # (Sending any faster doesn't really provide any advantages)
         # But notice that we also do not want to fill up the buffer and get buffer losses!
@@ -204,25 +220,31 @@ class UDPClient:
         sending_interval = max(processing_delay, (processing_delay + rtt) / buffer_size)
         # (processing_delay + rtt) / buffer_size is the minimum interval we can place while ensuring no buffer loss
         # TODO: Account for small delta errors
-        
+        print(sending_interval, flush=True)
+
+        start_time = time.time()
 
         seq = self.last_ack + 1
-        while self.last_ack < 10_000:
+        while self.last_ack < 1000:
             # Send the remaining packets
-            time.sleep(sending_interval)
-            
+            time.sleep(sending_interval * 1.05 * 2)
+
             # TODO: Account for race conditions!
-            if (self.acks[-1][1] == self.acks[-2][1]):
-                # Whenever we percieve a double ack we reset our sequence number
+            if (
+                time.time() - start_time >= rtt * 1.05
+                and self.acks[-1][1] == self.acks[-3][1]
+                and self.acks[-1][1] == self.acks[-2][1]
+            ):
+                print("DOUBLE ACK", seq, flush=True)
+                # Whenever we perceive a double ack we reset our sequence number
                 seq = self.acks[-1][1] + 1
+                time.sleep(rtt * 1.05)
 
             # TODO: We can actually be smarter about when to reset our sequence number!
-
 
             # We keep incrementally sending data
             self.send_queue.put(seq)
             seq += 1
-        
 
     def main(self) -> bool:
         """
@@ -231,10 +253,11 @@ class UDPClient:
         """
         # Stage 1:
         rtt, proc = self.estimate_delays()
-        
+
         # Stage 2:
         buffer_size = self.estimate_buffer(rtt, proc)
-        
+        print(buffer_size, flush=True)
+
         # Stage 3:
         self.profit(rtt, proc, buffer_size)
 
@@ -243,12 +266,14 @@ class UDPClient:
 
 client = UDPClient(("127.0.0.1", 12000))
 
+t0 = time.time()
 success = client.run()
 
-if (success):
-    print("TIME TAKEN!")
+if success:
+    t1 = time.time()
+    print("TIME TAKEN!", t1 - t0, flush=True)
 else:
-    print("SOMETHING VERY BAD HAPPENED!")
+    print("SOMETHING VERY BAD HAPPENED!", flush=True)
 # Measure here ig :)
 
 client.cleanup()
