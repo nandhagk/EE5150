@@ -37,7 +37,6 @@ class UDPClient:
         self.total_sends = 0
         self.total_recs = 0
 
-
     def _service_loop(self):
         """
         Handles sending messages to the server.
@@ -55,9 +54,8 @@ class UDPClient:
                     struct.pack("!I", max(self.last_ack + 1, seq)), self.__address
                 )
 
-                if (self.start_polling):
+                if self.start_polling:
                     self.total_sends += 1
-
 
                 self.listen_ready.set()
             except Exception:
@@ -75,7 +73,7 @@ class UDPClient:
                     return
 
                 seq: Seq = struct.unpack("!I", response)[0]
-                if (self.start_polling):
+                if self.start_polling:
                     self.total_recs += 1
 
                 self.last_ack = seq
@@ -212,7 +210,6 @@ class UDPClient:
         # If we did not get buffer losses till here, we can confidently say our buffer is big enough :)
 
         return REQUIRED_BUFFER_SIZE
-    
 
     def profit(self, rtt: float, processing_delay: float, buffer_size: int):
         """
@@ -228,7 +225,7 @@ class UDPClient:
 
         sending_interval = max(processing_delay, (processing_delay + rtt) / buffer_size)
         # (processing_delay + rtt) / buffer_size is the minimum interval we can place while ensuring no buffer loss
-        
+
         self.start_polling = True
         drop_chance = 0
 
@@ -247,22 +244,32 @@ class UDPClient:
                 print("TRIPLE ACK", self.acks[-1][1], flush=True)
                 # Whenever we perceive a triple ack we reset our sequence number
                 seq = self.acks[-1][1] + 1
-                time.sleep(rtt * 1.05) # Let the buffer clear
+                time.sleep(rtt * 1.05)  # Let the buffer clear
 
             # TODO: We can actually be smarter about when to reset our sequence number!
 
             if self.total_sends > 10:
-                in_buffer = (seq - self.acks[-1][1])
-                drop_chance = max(1 - (self.total_recs + in_buffer) / (self.total_sends), 0)
+                in_buffer = seq - self.acks[-1][1]
+                drop_chance = max(
+                    1 - (self.total_recs + in_buffer) / (self.total_sends), 0
+                )
 
             # A nice heuristic we discovered :)
-            send_count = round(math.exp(drop_chance / (1 - min(drop_chance, 0.9))) * 5 - 4)
-            
-            print(drop_chance, send_count, send_count * (1 - drop_chance), self.total_recs, self.total_sends)
+            send_count = round(
+                math.exp(drop_chance / (1 - min(drop_chance, 0.9))) * 6 - 5
+            )
+
+            print(
+                drop_chance,
+                send_count,
+                send_count * (1 - drop_chance),
+                self.total_recs,
+                self.total_sends,
+            )
             # We keep incrementally sending data
             for _ in range(send_count):
                 self.send_queue.put(seq)
-            
+
             time.sleep(sending_interval * 1.05 * send_count)
             seq += 1
 
@@ -278,7 +285,7 @@ class UDPClient:
         # Stage 2:
         buffer_size = self.estimate_buffer(rtt, proc)
         print(buffer_size, flush=True)
-        
+
         # Stage 3:
         self.profit(rtt, proc, buffer_size)
 
