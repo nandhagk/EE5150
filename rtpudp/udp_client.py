@@ -245,15 +245,15 @@ class UDPClient:
             # Send the remaining packets
 
             # TODO: Account for race conditions!
-            if (
-                time.time() - start_time >= rtt * 1.05
-                and self.acks[-1][1] == self.acks[-3][1]
-                and self.acks[-1][1] == self.acks[-2][1]
-            ):
-                print("TRIPLE ACK", self.acks[-1][1], flush=True)
-                # Whenever we perceive a triple ack we reset our sequence number
-                seq = self.acks[-1][1] + 1
-                time.sleep(rtt * 1.05)  # Let the buffer clear
+            # if (
+            #     time.time() - start_time >= rtt * 1.05
+            #     and self.acks[-1][1] == self.acks[-3][1]
+            #     and self.acks[-1][1] == self.acks[-2][1]
+            # ):
+            #     print("TRIPLE ACK", self.acks[-1][1], flush=True)
+            #     # Whenever we perceive a triple ack we reset our sequence number
+            #     seq = self.acks[-1][1] + 1
+            #     time.sleep(rtt * 1.05)  # Let the buffer clear
 
             # TODO: We can actually be smarter about when to reset our sequence number!
 
@@ -264,9 +264,12 @@ class UDPClient:
                 )
 
             # A nice heuristic we discovered :)
-            send_count = round(
-                math.exp(drop_chance / (1 - min(drop_chance, 0.9))) * 6 - 5
-            )
+            send_count = 3
+            # if drop_chance > 0:
+            #     send_count = 3
+            # send_count = round(
+            #     math.exp(drop_chance / (1 - min(drop_chance, 0.9))) * 6 - 5
+            # )
 
             print(
                 drop_chance,
